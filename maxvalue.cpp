@@ -11,6 +11,7 @@
 #include <iomanip>
 #include <queue>
 #include <chrono>
+#include <cassert>
 #define x first
 #define y second
 
@@ -165,7 +166,7 @@ vector<pii> anneal(vector<vector<ld>> val,int torchc,pii start,vector<vector<int
 	ld med;
 	if (formed.empty()) med=1;
 	else med=formed[formed.size()/2];
-	const int ITERCOUNT=5e3;
+	const int ITERCOUNT=5e1;
 	uniform_real_distribution<ld> dis(0,1);
 	ld maxval=gettotval(poi,val);
 	vector<pii> maxpoi=poi;
@@ -250,56 +251,87 @@ void genRandTest(int n,int m,int k,int l) //just for testing
 	totcor+=valann/valopt;
 }
 
-const int MAXGK=10,MAXSK=25,MAXRGK=0,MAXRSK=3;
-using muldesc=array<array<array<array<vector<pair<vector<vector<pii>>,ld>>,MAXSK>,MAXSK>,MAXGK>,MAXGK>;
-using floordesc=array<array<array<array<vector<pair<vector<pii>,ld>>,MAXSK>,MAXSK>,MAXGK>,MAXGK>;
+const vector<string> specNames={"Titan","Moon","Sun","Ruby","Sapphire","Emerald"};
+const int MAXGK=10,MAXSK=25,MAXRGK=1,MAXRSK=3,CNTSPEC=3,TOTSPEC=6; //MAXRGK is the max number of gold keys to stockpile while having an unopened gold lock that you're planning to open, same with MAXRSK and silver keys
+//CNTSPEC is the maximum number of special keys/locks that it makes sense to keep in mind at once
+//that is if f(x)=(total number of special keys/locks up to floor x)-2*(number of colors such that there is both a key and a lock of that color up to floor x), CNTSPEC is the maximum value of f(x)
+//for simplicity, i'm assuming that a special key and a special lock will never exist on the same floor
+//TOTSPEC is the total number of special keys/locks
+using muldesc=array<array<array<array<array<vector<pair<vector<vector<pii>>,ld>>,MAXSK>,MAXSK>,MAXGK>,MAXGK>,1<<CNTSPEC>;
+using floordesc=array<array<array<array<array<vector<pair<vector<pii>,ld>>,MAXSK>,MAXSK>,MAXGK>,MAXGK>,1<<CNTSPEC>;
 int curFloorForDebug;
 
-pair<muldesc,array<int,4>> addFloor(const muldesc&prev,const floordesc&newf,array<int,4> dim1,array<int,4> dim2,array<int,2> req,array<int,4> latkl)
+int relevantToAll(int revMask,set<int> revSet)
+{
+	vector<int> revVec(revSet.begin(),revSet.end());
+	int allMask=0;
+	for (int i=0;i<(int)revVec.size();++i) allMask+=((revMask>>i)&1)<<revVec[i];
+	return allMask;
+}
+
+int allToRelevant(int allMask,set<int> revSet)
+{
+	vector<int> revVec(revSet.begin(),revSet.end());
+	int revMask=0;
+	for (int i=0;i<(int)revVec.size();++i) revMask+=((allMask>>revVec[i])&1)<<i;
+	return revMask;
+}
+
+pair<muldesc,array<int,4>> addFloor(const muldesc&prev,const floordesc&newf,array<int,4> dim1,array<int,4> dim2,array<int,2> req,array<int,4> latkl,set<int> revBefore,set<int> revNew)
 {
 	muldesc res;
-	for (int gk1=0;gk1<dim1[0];++gk1) for (int gk2=max(0,req[0]-gk1);gk2<dim2[0];++gk2)
+	int cspec1=revBefore.size(),cspec2=revNew.size();
+	for (int mask1=0;mask1<(1<<cspec1);++mask1) for (int mask2=0;mask2<(1<<cspec2);++mask2)
 	{
-		for (int gl1=0;gl1<dim1[1];++gl1) for (int gl2=req[0];gl2<dim2[1];++gl2)
+		int all1=relevantToAll(mask1,revBefore),all2=relevantToAll(mask2,revNew);
+		bool validMask=1;
+		for (auto x: revBefore) if (!revNew.count(x) && ((all1>>x)&1)) validMask=0;
+		if (!validMask) continue;
+		int newMask=allToRelevant(all1^all2,revNew);
+		//clog<<all1<<' '<<all2<<' '<<newMask<<endl;
+		for (int gk1=0;gk1<dim1[0];++gk1) for (int gk2=max(0,req[0]-gk1);gk2<dim2[0];++gk2)
 		{
-			if (gk1>MAXRGK && gl1>0) continue;
-			for (int sk1=0;sk1<dim1[2];++sk1) for (int sk2=max(0,req[1]-sk1);sk2<dim2[2];++sk2)
+			for (int gl1=0;gl1<dim1[1];++gl1) for (int gl2=req[0];gl2<dim2[1];++gl2)
 			{
-				for (int sl1=0;sl1<dim1[3];++sl1) for (int sl2=req[1];sl2<dim2[3];++sl2)
+				if (gk1>MAXRGK && gl1>0) continue;
+				for (int sk1=0;sk1<dim1[2];++sk1) for (int sk2=max(0,req[1]-sk1);sk2<dim2[2];++sk2)
 				{
-					if (sk1>MAXRSK && sl1>0) continue;
-					if (prev[gk1][gl1][sk1][sl1].empty() || newf[gk2][gl2][sk2][sl2].empty()) continue;
-					//clog<<"merging "<<gk1<<' '<<gl1<<' '<<sk1<<' '<<sl1<<" and "<<gk2<<' '<<gl2<<' '<<sk2<<' '<<sl2<<endl;
-					int reqs=(int)prev[gk1][gl1][sk1][sl1].size()+(int)newf[gk2][gl2][sk2][sl2].size()-1;
-					//clog<<"Expected size: "<<reqs<<' '<<prev[gk1][sl1][sk1][sl1].size()<<' '<<newf[gk2][gl2][sk2][sl2].size()<<endl;
-					int ngk=gk1+gk2-req[0],ngl=gl1+gl2-req[0],nsk=sk1+sk2-req[1],nsl=sl1+sl2-req[1];
-					if (ngk>ngl+latkl[1]) continue;
-					if (ngl>ngk+latkl[0]) continue;
-					if (nsk>nsl+latkl[3]) continue;
-					if (nsl>nsk+latkl[2]) continue;
-					if (ngk>MAXRGK && ngl>0)
+					for (int sl1=0;sl1<dim1[3];++sl1) for (int sl2=req[1];sl2<dim2[3];++sl2)
 					{
-						int kol=min(ngk-MAXRGK,ngl);
-						ngk-=kol;
-						ngl-=kol;
-					}
-					if (nsk>MAXRSK && nsl>0)
-					{
-						int kol=min(nsk-MAXRSK,nsl);
-						nsk-=kol;
-						nsl-=kol;
-					}
-					while ((int)res[ngk][ngl][nsk][nsl].size()<reqs) res[ngk][ngl][nsk][nsl].push_back({{},-INF*10000});
-					//clog<<"Expanded res."<<endl;
-					for (int tc1=0;tc1<(int)prev[gk1][gl1][sk1][sl1].size();++tc1) for (int tc2=0;tc2<(int)newf[gk2][gl2][sk2][sl2].size();++tc2)
-					{
-						ld nv=prev[gk1][gl1][sk1][sl1][tc1].y+newf[gk2][gl2][sk2][sl2][tc2].y;
-						if (nv>res[ngk][ngl][nsk][nsl][tc1+tc2].y)
+						if (sk1>MAXRSK && sl1>0) continue;
+						if (prev[mask1][gk1][gl1][sk1][sl1].empty() || newf[mask2][gk2][gl2][sk2][sl2].empty()) continue;
+						//clog<<"merging "<<gk1<<' '<<gl1<<' '<<sk1<<' '<<sl1<<" and "<<gk2<<' '<<gl2<<' '<<sk2<<' '<<sl2<<endl;
+						int reqs=(int)prev[mask1][gk1][gl1][sk1][sl1].size()+(int)newf[mask2][gk2][gl2][sk2][sl2].size()-1;
+						//clog<<"Expected size: "<<reqs<<' '<<prev[gk1][sl1][sk1][sl1].size()<<' '<<newf[gk2][gl2][sk2][sl2].size()<<endl;
+						int ngk=gk1+gk2-req[0],ngl=gl1+gl2-req[0],nsk=sk1+sk2-req[1],nsl=sl1+sl2-req[1];
+						if (ngk>ngl+latkl[1]) continue;
+						if (ngl>ngk+latkl[0]) continue;
+						if (nsk>nsl+latkl[3]) continue;
+						if (nsl>nsk+latkl[2]) continue;
+						if (ngk>MAXRGK && ngl>0)
 						{
-							res[ngk][ngl][nsk][nsl][tc1+tc2].y=nv;
-							vector<vector<pii>> no=prev[gk1][gl1][sk1][sl1][tc1].x;
-							no.push_back(newf[gk2][gl2][sk2][sl2][tc2].x);
-							res[ngk][ngl][nsk][nsl][tc1+tc2].x=no;
+							int kol=min(ngk-MAXRGK,ngl);
+							ngk-=kol;
+							ngl-=kol;
+						}
+						if (nsk>MAXRSK && nsl>0)
+						{
+							int kol=min(nsk-MAXRSK,nsl);
+							nsk-=kol;
+							nsl-=kol;
+						}
+						while ((int)res[newMask][ngk][ngl][nsk][nsl].size()<reqs) res[newMask][ngk][ngl][nsk][nsl].push_back({{},-INF*10000});
+						//clog<<"Expanded res."<<endl;
+						for (int tc1=0;tc1<(int)prev[mask1][gk1][gl1][sk1][sl1].size();++tc1) for (int tc2=0;tc2<(int)newf[mask2][gk2][gl2][sk2][sl2].size();++tc2)
+						{
+							ld nv=prev[mask1][gk1][gl1][sk1][sl1][tc1].y+newf[mask2][gk2][gl2][sk2][sl2][tc2].y;
+							if (nv>res[newMask][ngk][ngl][nsk][nsl][tc1+tc2].y)
+							{
+								res[newMask][ngk][ngl][nsk][nsl][tc1+tc2].y=nv;
+								vector<vector<pii>> no=prev[mask1][gk1][gl1][sk1][sl1][tc1].x;
+								no.push_back(newf[mask2][gk2][gl2][sk2][sl2][tc2].x);
+								res[newMask][ngk][ngl][nsk][nsl][tc1+tc2].x=no;
+							}
 						}
 					}
 				}
@@ -339,7 +371,7 @@ int minLocks(vector<vector<int>> allo,vector<pii> lockp,pii start,pii exitp)
 
 int sce=0;
 
-pair<floordesc,array<int,4>> getRes(vector<vector<ld>> val,vector<vector<int>> allo,pii start,vector<pair<pii,int>> pl,vector<pii> sk,vector<pii> sl,vector<pii> gk,vector<pii> gl,bool reqExit,pii exitp={-1,-1})
+pair<floordesc,array<int,4>> getRes(vector<vector<ld>> val,vector<vector<int>> allo,pii start,vector<pair<pii,int>> pl,vector<pii> sk,vector<pii> sl,vector<pii> gk,vector<pii> gl,vector<pair<int,pii>> speck,vector<pair<int,pii>> specl,bool reqExit,pii exitp={-1,-1})
 {
 	if (reqExit && exitp==make_pair(-1,-1)) exit(420691);
 	if (!reqExit && exitp!=make_pair(-1,-1)) exit(420692);
@@ -352,103 +384,133 @@ pair<floordesc,array<int,4>> getRes(vector<vector<ld>> val,vector<vector<int>> a
 		{
 			for (int maskSK=0;maskSK<(1<<sk.size());++maskSK) for (int maskSL=0;maskSL<(1<<sl.size());++maskSL)
 			{
-				vector<vector<ld>> newval=val;
-				vector<vector<int>> newallo=allo;
-				ld offset=0;
-				if (reqExit)
+				for (int maskSPECK=0;maskSPECK<(1<<speck.size());++maskSPECK) for (int maskSPECL=0;maskSPECL<(1<<specl.size());++maskSPECL)
 				{
-					newval[exitp.x][exitp.y]+=INF;
-					offset+=INF;
-				}
-				int gapl=0;
-				for (int i=0;i<(int)pl.size();++i)
-				{
-					if ((maskPL>>i)&1)
+					vector<vector<ld>> newval=val;
+					vector<vector<int>> newallo=allo;
+					ld offset=0;
+					if (reqExit)
 					{
-						newval[pl[i].x.x][pl[i].x.y]+=INF;
+						newval[exitp.x][exitp.y]+=INF;
 						offset+=INF;
-						gapl+=pl[i].y;
 					}
-					else newallo[pl[i].x.x][pl[i].x.y]=0;
-				}
-				int gkc=0,glc=0,skc=0,slc=0;
-				for (int i=0;i<(int)gk.size();++i)
-				{
-					if ((maskGK>>i)&1)
+					int gapl=0;
+					for (int i=0;i<(int)pl.size();++i)
 					{
-						newval[gk[i].x][gk[i].y]+=INF;
-						offset+=INF;
-						gkc++;
-					}
-					else newallo[gk[i].x][gk[i].y]=0;
-				}
-				for (int i=0;i<(int)gl.size();++i)
-				{
-					if ((maskGL>>i)&1)
-					{
-						newval[gl[i].x][gl[i].y]+=INF;
-						offset+=INF;
-						glc++;
-					}
-					else newallo[gl[i].x][gl[i].y]=0;
-				}
-				for (int i=0;i<(int)sk.size();++i)
-				{
-					if ((maskSK>>i)&1)
-					{
-						newval[sk[i].x][sk[i].y]+=INF;
-						offset+=INF;
-						skc++;
-					}
-					else newallo[sk[i].x][sk[i].y]=0;
-				}
-				for (int i=0;i<(int)sl.size();++i)
-				{
-					if ((maskSL>>i)&1)
-					{
-						newval[sl[i].x][sl[i].y]+=INF;
-						offset+=INF;
-						slc++;
-					}
-					else newallo[sl[i].x][sl[i].y]=0;
-				}
-				vector<vector<pii>> sre;
-				for (int torchc=0;torchc<gapl;++torchc) sre.push_back({});
-				for (int torchc=gapl;torchc<maxtorchc;++torchc)
-				{
-					++sce;
-					sre.push_back(anneal(newval,torchc,start,newallo));
-				}
-				for (int z=0;z<5;++z)
-				{
-					for (int torchc=maxtorchc-1;torchc>gapl;--torchc)
-					{
-						vector<pii> re=sre[torchc];
-						for (int i=0;i<(int)re.size();++i) if (re[i]!=start)
+						if ((maskPL>>i)&1)
 						{
-							vector<pii> re1=re;
-							re1.erase(re1.begin()+i);
-							if (connected(re1) && gettotval(re1,newval)>gettotval(sre[torchc-1],newval)) sre[torchc-1]=re1;
+							newval[pl[i].x.x][pl[i].x.y]+=INF;
+							offset+=INF;
+							gapl+=pl[i].y;
+						}
+						else newallo[pl[i].x.x][pl[i].x.y]=0;
+					}
+					int gkc=0,glc=0,skc=0,slc=0;
+					for (int i=0;i<(int)gk.size();++i)
+					{
+						if ((maskGK>>i)&1)
+						{
+							newval[gk[i].x][gk[i].y]+=INF;
+							offset+=INF;
+							gkc++;
+						}
+						else newallo[gk[i].x][gk[i].y]=0;
+					}
+					for (int i=0;i<(int)gl.size();++i)
+					{
+						if ((maskGL>>i)&1)
+						{
+							newval[gl[i].x][gl[i].y]+=INF;
+							offset+=INF;
+							glc++;
+						}
+						else newallo[gl[i].x][gl[i].y]=0;
+					}
+					for (int i=0;i<(int)sk.size();++i)
+					{
+						if ((maskSK>>i)&1)
+						{
+							newval[sk[i].x][sk[i].y]+=INF;
+							offset+=INF;
+							skc++;
+						}
+						else newallo[sk[i].x][sk[i].y]=0;
+					}
+					for (int i=0;i<(int)sl.size();++i)
+					{
+						if ((maskSL>>i)&1)
+						{
+							newval[sl[i].x][sl[i].y]+=INF;
+							offset+=INF;
+							slc++;
+						}
+						else newallo[sl[i].x][sl[i].y]=0;
+					}
+					int maskPut=0;
+					for (int i=0;i<(int)speck.size();++i)
+					{
+						if ((maskSPECK>>i)&1)
+						{
+							newval[speck[i].y.x][speck[i].y.y]+=INF;
+							offset+=INF;
+							maskPut^=1<<speck[i].x;
 						}
 					}
-					for (int torchc=gapl;torchc<maxtorchc-1;++torchc)
+					for (int i=0;i<(int)specl.size();++i)
+					{
+						if ((maskSPECL>>i)&1)
+						{
+							newval[specl[i].y.x][specl[i].y.y]+=INF;
+							offset+=INF;
+							maskPut^=1<<specl[i].x;
+						}
+						else newallo[specl[i].y.x][specl[i].y.y]=0;
+					}
+					vector<vector<pii>> sre;
+					for (int torchc=0;torchc<gapl;++torchc) sre.push_back({});
+					//clog<<offset<<endl;
+					for (int torchc=gapl;torchc<maxtorchc;++torchc)
+					{
+						++sce;
+						sre.push_back(anneal(newval,torchc,start,newallo));
+						//clog<<torchc<<' '<<sre[torchc].size()<<endl;
+					}
+					for (int z=0;z<5;++z)
+					{
+						for (int torchc=maxtorchc-1;torchc>gapl;--torchc)
+						{
+							vector<pii> re=sre[torchc];
+							if (torchc>0 && re.size()==1) continue;
+							for (int i=0;i<(int)re.size();++i) if (re[i]!=start)
+							{
+								vector<pii> re1=re;
+								re1.erase(re1.begin()+i);
+								if (connected(re1) && gettotval(re1,newval)>gettotval(sre[torchc-1],newval)) sre[torchc-1]=re1;
+							}
+						}
+						for (int torchc=gapl;torchc<maxtorchc-1;++torchc)
+						{
+							vector<pii> re=sre[torchc];
+							if (torchc>0 && re.size()==1) continue;
+							vector<pii> re1=addall(re,n,m,newallo,newval);
+							if (gettotval(re1,newval)>gettotval(sre[torchc+1],newval)) sre[torchc+1]=re1;
+						}
+					}
+					for (int torchc=gapl;torchc<maxtorchc;++torchc)
 					{
 						vector<pii> re=sre[torchc];
-						vector<pii> re1=addall(re,n,m,newallo,newval);
-						if (gettotval(re1,newval)>gettotval(sre[torchc+1],newval)) sre[torchc+1]=re1;
-					}
-				}
-				for (int torchc=gapl;torchc<maxtorchc;++torchc)
-				{
-					vector<pii> re=sre[torchc];
-					int nettorchc=torchc-gapl;
-					ld nv=gettotval(re,newval)-offset;
-					if (nv<0) continue;
-					while ((int)res[gkc][glc][skc][slc].size()<=nettorchc) res[gkc][glc][skc][slc].push_back({{},-INF*10000});
-					if (res[gkc][glc][skc][slc][nettorchc].y<nv)
-					{
-						res[gkc][glc][skc][slc][nettorchc].x=re;
-						res[gkc][glc][skc][slc][nettorchc].y=nv;
+						int nettorchc=torchc-gapl;
+						ld nv=gettotval(re,newval)-offset;
+						if (torchc>0 && re.size()==1) continue;
+						//clog<<re.size()<<' '<<torchc+1<<' '<<nv<<endl;
+						assert((int)re.size()==torchc+1);
+						if (nv<0) continue;
+						while ((int)res[maskPut][gkc][glc][skc][slc].size()<=nettorchc) res[maskPut][gkc][glc][skc][slc].push_back({{},-INF*10000});
+						if (res[maskPut][gkc][glc][skc][slc][nettorchc].y<nv)
+						{
+							res[maskPut][gkc][glc][skc][slc][nettorchc].x=re;
+							res[maskPut][gkc][glc][skc][slc][nettorchc].y=nv;
+						}
 					}
 				}
 			}
@@ -479,7 +541,7 @@ string inSheet(string y)
 	}
 	if (x=="PL")
 	{
-		string temps=y.substr(2)+" pet";
+		string temps=y.substr(2)+" egg";
 		if (y.substr(2)!="1") temps.push_back('s');
 		return temps;
 	}
@@ -501,6 +563,16 @@ string inSheet(string y)
 	if (x=="DO") return "Doom Perk";
 	if (x=="FS") return y.substr(2)+" FS";
 	if (x=="FW") return "Fortune Weapon";
+	if (x=="WC") return y.substr(2)+" Wild Cards";
+	if (x=="HS") return "Fortune Scroll";
+	if (x[0]=='K')
+	{
+		return specNames[x[1]-'1']+" Key";
+	}
+	if (x[0]=='L')
+	{
+		return specNames[x[1]-'1']+" Lock";
+	}
 	if (x=="XX") return "";
 	clog<<x<<endl;
 	exit(6969);
@@ -513,7 +585,9 @@ int main()
 	player>>torchCount;
 	string filler;
 	player>>filler>>filler;
-	const int REC=20;
+	int torchCost;
+	player>>filler>>filler>>filler>>torchCost>>filler;
+	const int REC=22;
 	map<string,ld> values;
 	for (int i=0;i<REC;++i)
 	{
@@ -560,22 +634,28 @@ int main()
 	dung.open("dungeon.txt");
 	dung>>floorCount;
 	muldesc curState;
-	curState[0][0][0][0]={{{},0}};
+	curState[0][0][0][0][0]={{{},0}};
 	vector<vector<vector<pii>>> optpoi;
 	vector<ld> optval;
 	vector<pii> dim,sta;
 	array<int,4> dimens={1,1,1,1};
+	vector<vector<vector<ld>>> archiveVal;
+	vector<array<int,TOTSPEC>> specMasks(1);
+	for (int i=0;i<TOTSPEC;++i) specMasks[0][i]=0;
+	vector<set<int>> relevantSpecial(1);
 	for (int floor=1;floor<=floorCount;++floor)
 	{
 		curFloorForDebug=floor;
 		vector<pair<pii,int>> pl;
 		vector<pii> sk,sl,gk,gl;
+		vector<pair<int,pii>> speck,specl;
 		pii start={-1,-1},exit={-1,-1};
 		int n,m;
 		dung>>n>>m;
 		dim.push_back({n,m});
 		vector<vector<ld>> val(n,vector<ld>(m));
 		vector<vector<int>> allo(n,vector<int>(m));
+		specMasks.push_back(specMasks.back());
 		for (int i=0;i<n;++i) for (int j=0;j<m;++j)
 		{
 			string x;
@@ -591,11 +671,38 @@ int main()
 			if (nam=="GK") gk.push_back({i,j});
 			if (nam=="SK") sk.push_back({i,j});
 			if (nam=="PL") pl.push_back({{i,j},qu});
+			if (nam[0]=='K' && nam[1]>='0' && nam[1]<='9')
+			{
+				speck.push_back({nam[1]-'1',{i,j}});
+				specMasks[floor][nam[1]-'1']^=1;
+			}
+			if (nam[0]=='L' && nam[1]>='0' && nam[1]<='9')
+			{
+				specl.push_back({nam[1]-'1',{i,j}});
+				specMasks[floor][nam[1]-'1']^=2;
+			}
 		}
+		set<int> curRev;
+		for (int i=0;i<TOTSPEC;++i) curRev.insert(i);
+		for (int i=0;i<TOTSPEC;++i)
+		{
+			if (specMasks[floor][i]==3 && specMasks[floor-1][i]==3) curRev.erase(i);
+			if (specMasks[floor][i]==0) curRev.erase(i);
+		}
+		relevantSpecial.push_back(curRev);
+		vector<int> vecRel(curRev.begin(),curRev.end());
+		for (auto&x: speck) x.x=lower_bound(vecRel.begin(),vecRel.end(),x.x)-vecRel.begin();
+		for (auto&x: specl) x.x=lower_bound(vecRel.begin(),vecRel.end(),x.x)-vecRel.begin();
+		clog<<"Relevant keys/locks are ";
+		for (auto x: curRev) clog<<x;
+		clog<<endl<<"Special keys/locks in this floor are:"<<endl;
+		for (auto x: speck) clog<<"Relevant key "<<x.x<<" in ("<<x.y.x<<","<<x.y.y<<")"<<endl;
+		for (auto x: specl) clog<<"Relevant lock "<<x.x<<" in ("<<x.y.x<<","<<x.y.y<<")"<<endl;
+		archiveVal.push_back(val);
 		sce=0;
 		clog<<"Read dungeon "<<floor<<endl;
 		auto startTime=chrono::high_resolution_clock::now();
-		auto resEndEv=getRes(val,allo,start,pl,sk,sl,gk,gl,0);
+		auto resEndEv=getRes(val,allo,start,pl,sk,sl,gk,gl,speck,specl,0);
 		chrono::duration<double> diff=chrono::high_resolution_clock::now()-startTime;
 		floordesc resEnd=resEndEv.x;
 		array<int,4> dimcufl1=resEndEv.y;
@@ -604,7 +711,7 @@ int main()
 		tottim+=diff.count();
 		startTime=chrono::high_resolution_clock::now();
 		{
-			auto totalEndEv=addFloor(curState,resEnd,dimens,dimcufl1,{0,0},{0,0,0,0});
+			auto totalEndEv=addFloor(curState,resEnd,dimens,dimcufl1,{0,0},{0,0,0,0},relevantSpecial[floor-1],relevantSpecial[floor]);
 			diff=chrono::high_resolution_clock::now()-startTime;
 			const muldesc&totalEnd=totalEndEv.x;
 			array<int,4> dimifexno=totalEndEv.y;
@@ -612,11 +719,15 @@ int main()
 			for (int cgk=0;cgk<dimifexno[0];++cgk) for (int cgl=0;cgl<dimifexno[1];++cgl) for (int csk=0;csk<dimifexno[2];++csk) for (int csl=0;csl<dimifexno[3];++csl)
 			{
 				if (cgl>cgk || csl>csk) continue;
-				while (optpoi.size()<totalEnd[cgk][cgl][csk][csl].size()) optpoi.push_back({}),optval.push_back(-INF*20000);
-				for (int toru=0;toru<(int)totalEnd[cgk][cgl][csk][csl].size();++toru) if (totalEnd[cgk][cgl][csk][csl][toru].y>optval[toru])
+				while (optpoi.size()<totalEnd[0][cgk][cgl][csk][csl].size()) optpoi.push_back({}),optval.push_back(-INF*20000);
+				for (int toru=0;toru<(int)totalEnd[0][cgk][cgl][csk][csl].size();++toru)
 				{
-					optval[toru]=totalEnd[cgk][cgl][csk][csl][toru].y;
-					optpoi[toru]=totalEnd[cgk][cgl][csk][csl][toru].x;
+					if (totalEnd[0][cgk][cgl][csk][csl][toru].y>optval[toru])
+					{
+						optval[toru]=totalEnd[0][cgk][cgl][csk][csl][toru].y;
+						optpoi[toru]=totalEnd[0][cgk][cgl][csk][csl][toru].x;
+					}
+					//clog<<toru<<' '<<totalEnd[0][cgk][cgl][csk][csl][toru].y<<' '<<totalEnd[1][cgk][cgl][csk][csl][toru].y<<endl;
 				}
 			}
 		}
@@ -626,7 +737,7 @@ int main()
 			int minGK=minLocks(allo,gl,start,exit);
 			int minSK=minLocks(allo,sl,start,exit);
 			startTime=chrono::high_resolution_clock::now();
-			auto resNoEndEv=getRes(val,allo,start,pl,sk,sl,gk,gl,1,exit);
+			auto resNoEndEv=getRes(val,allo,start,pl,sk,sl,gk,gl,speck,specl,1,exit);
 			diff=chrono::high_resolution_clock::now()-startTime;
 			floordesc resNoEnd=resNoEndEv.x;
 			array<int,4> dimcufl2=resNoEndEv.y;
@@ -634,7 +745,7 @@ int main()
 			clog<<"Got results if dungeon "<<floor<<" isn't the end in "<<diff.count()<<" seconds."<<endl;
 			tottim+=diff.count();
 			startTime=chrono::high_resolution_clock::now();
-			auto curStateEv=addFloor(curState,resNoEnd,dimens,dimcufl2,{minGK,minSK},latkl[floor]);
+			auto curStateEv=addFloor(curState,resNoEnd,dimens,dimcufl2,{minGK,minSK},latkl[floor],relevantSpecial[floor-1],relevantSpecial[floor]);
 			diff=chrono::high_resolution_clock::now()-startTime;
 			curState=curStateEv.x;
 			dimens=curStateEv.y;
@@ -642,19 +753,24 @@ int main()
 		}
 		sta.push_back(start);
 	}
+	clog<<"optval.size()="<<optval.size()<<endl;
 	torchCount=min(torchCount,(int)optval.size()-1);
+	clog<<"torchCount="<<torchCount<<endl;
 	ofstream result("result.txt");
 	ofstream inshee("intoSheet1.txt");
 	inshee<<"\xEF\xBB\xBF";
 	result<<"The highest obtainable value is "<<fixed<<setprecision(5)<<optval[torchCount]<<endl;
 	result<<"You should explore "<<optpoi[torchCount].size()<<" floors."<<endl;
 	result<<"Here are the cells you should unlock on each floor(S=start, 1=unlock, 0=don't unlock):"<<endl;
+	int totTorUse=0;
 	for (int f=0;f<(int)optpoi[torchCount].size();++f)
 	{
 		int n=dim[f].x,m=dim[f].y;
 		vector<vector<int>> re(n,vector<int>(m));
 		for (auto x: optpoi[torchCount][f]) ++re[x.x][x.y];
 		inshee<<"; ;A;B;C;D;E;F;G;H;I"<<endl;
+		totTorUse+=(int)optpoi[torchCount][f].size()-1;
+		result<<gettotval(optpoi[torchCount][f],archiveVal[f])<<" value for "<<(int)optpoi[torchCount][f].size()-1<<" torches:"<<endl;
 		for (int i=0;i<n;++i,result<<endl)
 		{
 			inshee<<i+1;
@@ -675,18 +791,19 @@ int main()
 		result<<endl;
 		inshee<<endl;
 	}
+	clog<<"totTorUse="<<totTorUse<<endl;
 	ld maxnet=optval[torchCount];
 	int howmaxnet=torchCount;
-	for (int i=torchCount;i<(int)optval.size();++i) if (optval[i]-(i-torchCount)*30*values["DI"]>maxnet)
+	for (int i=torchCount;i<(int)optval.size();++i) if (optval[i]-(i-torchCount)*torchCost>maxnet)
 	{
 		howmaxnet=i;
-		maxnet=optval[i]-(i-torchCount)*30*values["DI"];
+		maxnet=optval[i]-(i-torchCount)*torchCost;
 	}
 	if (howmaxnet!=torchCount)
 	{
 		ofstream insheeA("intoSheet2.txt");
 		insheeA<<"\xEF\xBB\xBF";
-		result<<"You can also buy "<<howmaxnet-torchCount<<" pet levels to get a value that's "<<optval[howmaxnet]-optval[torchCount]<<" higher, while only losing an equivalent of "<<(howmaxnet-torchCount)*30*values["DI"]<<" value on buying pets."<<endl;
+		result<<"You can also buy "<<howmaxnet-torchCount<<" pet levels to get a value that's "<<optval[howmaxnet]-optval[torchCount]<<" higher, while only losing an equivalent of "<<(howmaxnet-torchCount)*torchCost<<" value on buying pets."<<endl;
 		result<<"You should explore "<<optpoi[howmaxnet].size()<<" floors."<<endl;
 		result<<"Here are the cells you should unlock on each floor(S=start, 1=unlock, 0=don't unlock):"<<endl;
 		for (int f=0;f<(int)optpoi[howmaxnet].size();++f)
